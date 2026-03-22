@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 import os
 import time
-import json
 import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime
-import requests
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
 
 COOKIE_STR = os.environ.get('WEIBO_COOKIE', '')
 EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASS = os.environ.get('EMAIL_PASS', '')
 NOTIFY_EMAIL = os.environ.get('NOTIFY_EMAIL', '')
 
-CONTAINER_ID = '10080801cfe03f62bd4032bff8cb8607eb17e0'
+TOPIC_URL = 'https://weibo.com/p/10080801cfe03f62bd4032bff8cb8607eb17e0/super_index'
 
 def send_email(subject, content):
     if not EMAIL_USER or not EMAIL_PASS:
@@ -35,14 +38,20 @@ def send_email(subject, content):
     except Exception as e:
         print(f"邮件发送失败: {e}")
 
-def parse_cookie(cookie_str):
-    cookies = {}
+def add_cookies(driver, cookie_str):
+    """添加Cookie到浏览器"""
+    driver.get('https://weibo.com')
+    time.sleep(2)
+    
     for item in cookie_str.split(';'):
         item = item.strip()
         if '=' in item:
             key, value = item.split('=', 1)
-            cookies[key] = value
-    return cookies
+            if key in ['SUB', 'SUBP', 'SCF', 'PC_TOKEN']:
+                driver.add_cookie({'name': key, 'value': value, 'domain': '.weibo.com'})
+    
+    driver.refresh()
+    time.sleep(3)
 
 def do_sign():
     print(f"开始签到 - {datetime.now()}")
@@ -51,62 +60,67 @@ def do_sign():
         send_email("微博签到失败", "<p>未配置Cookie</p>")
         return False
     
-    cookies = parse_cookie(COOKIE_STR)
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-gpu')
+    chrome_options.add_argument('--window-size=1920,1080')
     
-    if 'SUB' not in cookies:
-        send_email("微博签到失败", "<p>Cookie无效</p>")
-        return False
-    
-    # 使用正确的签到API
-    url = 'http://i.huati.weibo.com/aj/super/checkin'
-    params = {
-        'id': CONTAINER_ID,
-        'status': 0,
-        'texta': '签到',
-        'textb': '已签到',
-        'api': 'http://i.huati.weibo.com/aj/super/checkin',
-        '_t': int(time.time() * 1000)
-    }
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': f'https://weibo.com/p/{CONTAINER_ID}/super_index',
-        'Accept': 'application/json, text/plain, */*',
-        'X-Requested-With': 'XMLHttpRequest',
-    }
-    
+    driver = None
     try:
-        # 注意：使用 HTTP 而不是 HTTPS
-        resp = requests.get(url, params=params, cookies=cookies, headers=headers, timeout=15)
-        print(f"状态码: {resp.status_code}")
-        print(f"响应: {resp.text}")
+        driver = webdriver.Chrome(options=chrome_options)
         
-        if resp.status_code != 200:
-            send_email("微博签到失败", f"<p>HTTP {resp.status_code}</p>")
-            return False
+        # 添加Cookie
+        add_cookies(driver, COOKIE_STR)
         
-        data = resp.json()
-        code = str(data.get('code', ''))
-        msg = data.get('msg', '')
+        # 访问超话页面
+        print(f"访问: {TOPIC_URL}")
+        driver.get(TOPIC_URL)
+        time.sleep(5)
         
-        # 真正的成功判断
-        if code == '100000':
-            print("✅ 签到成功!")
-            send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
-            return True
-        elif code == '382004' or '已签到' in msg:
-            print("📌 今日已签到")
-            send_email("微博签到提醒", "<p>今日已签到</p>")
-            return True
-        else:
-            print(f"❌ 签到失败: code={code}, msg={msg}")
-            send_email("微博签到失败", f"<p>code={code}<br>msg={msg}</p>")
+        # 查找签到按钮
+        try:
+            # 等待按钮加载
+            wait = WebDriverWait(driver, 10)
+            btn = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.btn_bed .W_btn_b')))
+            
+            btn_text = btn.text
+            print(f"按钮文字: {btn_text}")
+            
+            if btn_text == '已签到':
+                print("今日已签到")
+                send_email("微博签到提醒", "<p>今日已签到</p>")
+                return True
+            
+            # 点击签到
+            btn.click()
+            print("已点击签到按钮")
+            time.sleep(3)
+            
+            # 检查结果
+            new_text = driver.find_element(By.CSS_SELECTOR, '.btn_bed .W_btn_b').text
+            if new_text == '已签到':
+                print("✅ 签到成功!")
+                send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
+                return True
+            else:
+                print(f"签到后按钮文字: {new_text}")
+                send_email("微博签到失败", f"<p>签到后按钮文字: {new_text}</p>")
+                return False
+                
+        except Exception as e:
+            print(f"未找到签到按钮: {e}")
+            send_email("微博签到失败", f"<p>未找到签到按钮</p>")
             return False
             
     except Exception as e:
         print(f"错误: {e}")
         send_email("微博签到异常", f"<p>{e}</p>")
         return False
+    finally:
+        if driver:
+            driver.quit()
 
 if __name__ == '__main__':
     do_sign()
