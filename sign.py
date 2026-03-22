@@ -15,7 +15,7 @@ EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASS = os.environ.get('EMAIL_PASS', '')
 NOTIFY_EMAIL = os.environ.get('NOTIFY_EMAIL', '')
 
-TOPIC_URL = 'https://weibo.com/p/10080801cfe03f62bd4032bff8cb8607eb17e0/super_index'
+TOPIC_URL = 'https://weibo.com/p/1008087dd119ebf8a3a7c2c9096ce78536af41/super_index'
 
 def send_email(subject, content):
     if not EMAIL_USER or not EMAIL_PASS:
