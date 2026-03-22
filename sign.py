@@ -59,20 +59,20 @@ def do_sign():
         send_email("微博签到失败", "<p>Cookie无效</p>")
         return False
     
-    # 签到API
-    url = 'https://i.huati.weibo.com/aj/super/checkin'
+    # 使用微博主站签到接口
+    url = 'https://weibo.com/aj/immobile/super/checkin'
     params = {
         'id': CONTAINER_ID,
-        'status': 0,
-        'texta': '签到',
-        'textb': '已签到',
+        'location': 'page',
+        'format': 'cards',
         '_t': int(time.time() * 1000)
     }
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://weibo.com/',
+        'Referer': f'https://weibo.com/p/{CONTAINER_ID}/super_index',
         'Accept': 'application/json, text/plain, */*',
+        'X-Requested-With': 'XMLHttpRequest',
     }
     
     try:
@@ -81,13 +81,13 @@ def do_sign():
         print(f"响应: {resp.text}")
         
         data = resp.json()
-        code = str(data.get('code', ''))
         
-        if code == '100000':
+        # 检查返回结果
+        if data.get('code') == '100000':
             print("签到成功")
             send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
             return True
-        elif '382004' in code or '已签到' in resp.text:
+        elif '已签到' in str(data) or data.get('msg') == '已签到':
             print("今日已签到")
             send_email("微博签到提醒", "<p>今日已签到</p>")
             return True
