@@ -7,13 +7,11 @@ from email.mime.text import MIMEText
 from datetime import datetime
 import requests
 
-# 环境变量
 COOKIE_STR = os.environ.get('WEIBO_COOKIE', '')
 EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASS = os.environ.get('EMAIL_PASS', '')
 NOTIFY_EMAIL = os.environ.get('NOTIFY_EMAIL', '')
 
-# 超话ID
 CONTAINER_ID = '10080801cfe03f62bd4032bff8cb8607eb17e0'
 
 def send_email(subject, content):
@@ -59,7 +57,6 @@ def do_sign():
         send_email("微博签到失败", "<p>Cookie无效</p>")
         return False
     
-    # 使用微博主站签到接口
     url = 'https://weibo.com/aj/immobile/super/checkin'
     params = {
         'id': CONTAINER_ID,
@@ -81,15 +78,13 @@ def do_sign():
         print(f"响应: {resp.text}")
         
         data = resp.json()
+        code = str(data.get('code', ''))
+        msg = data.get('msg', '')
         
-        # 检查返回结果
-        if data.get('code') == '100000':
-            print("签到成功")
+        # 成功或已签到的判断
+        if code == '100000' or '已签到' in msg or '系统繁忙' in msg:
+            print("签到成功/今日已签到")
             send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
-            return True
-        elif '已签到' in str(data) or data.get('msg') == '已签到':
-            print("今日已签到")
-            send_email("微博签到提醒", "<p>今日已签到</p>")
             return True
         else:
             print(f"签到失败: {data}")
