@@ -10,13 +10,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    
+    - name: 安装Python
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-    - run: pip install requests
-    - run: python sign.py
+    
+    - name: 安装Chrome
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser
+    
+    - name: 安装依赖
+      run: |
+        pip install selenium webdriver-manager
+    
+    - name: 执行签到
       env:
         WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
         EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
         NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+      run: python sign.py
