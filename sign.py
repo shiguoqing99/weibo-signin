@@ -47,7 +47,8 @@ def add_cookies(driver, cookie_str):
         item = item.strip()
         if '=' in item:
             key, value = item.split('=', 1)
-            if key in ['SUB', 'SUBP', 'SCF', 'PC_TOKEN']:
+            # 只添加关键的认证Cookie
+            if key in ['SUB', 'SUBP', 'SCF', 'PC_TOKEN', 'ALF']:
                 driver.add_cookie({'name': key, 'value': value, 'domain': '.weibo.com'})
     
     driver.refresh()
@@ -79,39 +80,51 @@ def do_sign():
         driver.get(TOPIC_URL)
         time.sleep(5)
         
-        # 查找签到按钮
+        # 精确查找签到按钮（通过action-type属性）
         try:
-            # 等待按钮加载
             wait = WebDriverWait(driver, 10)
-            btn = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.btn_bed .W_btn_b')))
+            # 使用更精确的选择器
+            sign_btn = wait.until(EC.element_to_be_clickable(
+                (By.CSS_SELECTOR, '.btn_bed .W_btn_b[action-type="widget_take"]')
+            ))
             
-            btn_text = btn.text
-            print(f"按钮文字: {btn_text}")
+            btn_text = sign_btn.text
+            print(f"签到按钮文字: {btn_text}")
             
+            # 检查是否已签到（按钮文字为"已签到"）
             if btn_text == '已签到':
                 print("今日已签到")
                 send_email("微博签到提醒", "<p>今日已签到</p>")
                 return True
             
-            # 点击签到
-            btn.click()
+            # 未签到，点击签到
+            sign_btn.click()
             print("已点击签到按钮")
             time.sleep(3)
             
-            # 检查结果
-            new_text = driver.find_element(By.CSS_SELECTOR, '.btn_bed .W_btn_b').text
-            if new_text == '已签到':
-                print("✅ 签到成功!")
-                send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
-                return True
-            else:
+            # 检查签到结果
+            try:
+                result_btn = driver.find_element(By.CSS_SELECTOR, '.btn_bed .W_btn_b[action-type="widget_take"]')
+                new_text = result_btn.text
                 print(f"签到后按钮文字: {new_text}")
-                send_email("微博签到失败", f"<p>签到后按钮文字: {new_text}</p>")
+                
+                if new_text == '已签到':
+                    print("✅ 签到成功!")
+                    send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
+                    return True
+                else:
+                    print(f"签到后按钮未变为'已签到'")
+                    send_email("微博签到失败", f"<p>点击后按钮文字: {new_text}</p>")
+                    return False
+                    
+            except Exception as e:
+                print(f"检查结果失败: {e}")
+                send_email("微博签到异常", f"<p>点击后无法确认状态: {e}</p>")
                 return False
                 
         except Exception as e:
             print(f"未找到签到按钮: {e}")
-            send_email("微博签到失败", f"<p>未找到签到按钮</p>")
+            send_email("微博签到失败", f"<p>未找到签到按钮，可能页面结构已变化</p>")
             return False
             
     except Exception as e:
