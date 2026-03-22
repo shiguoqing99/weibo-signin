@@ -1,30 +1,22 @@
-name: 微博超话签到
+name: 微博签到
 
 on:
   schedule:
-    # 北京时间每天08:00执行
     - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
   sign:
     runs-on: ubuntu-latest
-    
     steps:
     - uses: actions/checkout@v4
-    
-    - name: 安装Python
-      uses: actions/setup-python@v5
+    - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-    
-    - name: 安装依赖
-      run: pip install requests
-    
-    - name: 执行签到
+    - run: pip install requests
+    - run: python sign.py
       env:
         WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
         EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
         NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
-      run: python sign.py
