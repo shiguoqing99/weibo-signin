@@ -12,7 +12,7 @@ EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASS = os.environ.get('EMAIL_PASS', '')
 NOTIFY_EMAIL = os.environ.get('NOTIFY_EMAIL', '')
 
-CONTAINER_ID = '1008087dd119ebf8a3a7c2c9096ce78536af41'
+CONTAINER_ID = '10080801cfe03f62bd4032bff8cb8607eb17e0'
 
 def send_email(subject, content):
     if not EMAIL_USER or not EMAIL_PASS:
@@ -57,11 +57,14 @@ def do_sign():
         send_email("微博签到失败", "<p>Cookie无效</p>")
         return False
     
-    url = 'https://weibo.com/aj/immobile/super/checkin'
+    # 使用正确的签到API
+    url = 'http://i.huati.weibo.com/aj/super/checkin'
     params = {
         'id': CONTAINER_ID,
-        'location': 'page',
-        'format': 'cards',
+        'status': 0,
+        'texta': '签到',
+        'textb': '已签到',
+        'api': 'http://i.huati.weibo.com/aj/super/checkin',
         '_t': int(time.time() * 1000)
     }
     
@@ -73,22 +76,31 @@ def do_sign():
     }
     
     try:
+        # 注意：使用 HTTP 而不是 HTTPS
         resp = requests.get(url, params=params, cookies=cookies, headers=headers, timeout=15)
         print(f"状态码: {resp.status_code}")
         print(f"响应: {resp.text}")
+        
+        if resp.status_code != 200:
+            send_email("微博签到失败", f"<p>HTTP {resp.status_code}</p>")
+            return False
         
         data = resp.json()
         code = str(data.get('code', ''))
         msg = data.get('msg', '')
         
-        # 成功或已签到的判断
-        if code == '100000' or '已签到' in msg or '系统繁忙' in msg:
-            print("签到成功/今日已签到")
+        # 真正的成功判断
+        if code == '100000':
+            print("✅ 签到成功!")
             send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
             return True
+        elif code == '382004' or '已签到' in msg:
+            print("📌 今日已签到")
+            send_email("微博签到提醒", "<p>今日已签到</p>")
+            return True
         else:
-            print(f"签到失败: {data}")
-            send_email("微博签到失败", f"<p>{data}</p>")
+            print(f"❌ 签到失败: code={code}, msg={msg}")
+            send_email("微博签到失败", f"<p>code={code}<br>msg={msg}</p>")
             return False
             
     except Exception as e:
