@@ -1,8 +1,6 @@
 name: 微博签到
 
 on:
-  schedule:
-
   workflow_dispatch:
 
 jobs:
