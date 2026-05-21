@@ -80,12 +80,11 @@ def do_sign():
         driver.get(TOPIC_URL)
         time.sleep(5)
         
-        # 精确查找签到按钮（通过action-type属性）
+        # 查找签到按钮（使用新的选择器）
         try:
             wait = WebDriverWait(driver, 10)
-            # 使用更精确的选择器
             sign_btn = wait.until(EC.element_to_be_clickable(
-                (By.CSS_SELECTOR, '.btn_bed .W_btn_b[action-type="widget_take"]')
+                (By.CSS_SELECTOR, '._signBtnOverlay_1sn1l_355')
             ))
             
             btn_text = sign_btn.text
@@ -102,9 +101,9 @@ def do_sign():
             print("已点击签到按钮")
             time.sleep(3)
             
-            # 检查签到结果
+            # 检查签到结果（使用新的选择器）
             try:
-                result_btn = driver.find_element(By.CSS_SELECTOR, '.btn_bed .W_btn_b[action-type="widget_take"]')
+                result_btn = driver.find_element(By.CSS_SELECTOR, '._signBtnOverlay_1sn1l_355')
                 new_text = result_btn.text
                 print(f"签到后按钮文字: {new_text}")
                 
