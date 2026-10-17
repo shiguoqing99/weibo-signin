@@ -77,7 +77,6 @@ def find_sign_button(driver, max_wait=20):
     start = time.time()
     attempt = 0
 
-    # 关键改动：先滚到顶部，签到按钮通常在超话头部
     try:
         driver.execute_script("window.scrollTo(0, 0);")
         time.sleep(1)
@@ -87,10 +86,8 @@ def find_sign_button(driver, max_wait=20):
     while time.time() - start < max_wait:
         attempt += 1
 
-        # 检查是否有 iframe，如果有就切进去找
         iframes = driver.find_elements(By.TAG_NAME, 'iframe')
         if iframes:
-            print(f"[第{attempt}次] 发现 {len(iframes)} 个 iframe，尝试切换查找")
             for idx, iframe in enumerate(iframes):
                 try:
                     driver.switch_to.frame(iframe)
@@ -100,7 +97,6 @@ def find_sign_button(driver, max_wait=20):
                             btn = elements[0]
                             text = btn.text.strip()
                             print(f"[第{attempt}次] 在 iframe[{idx}] 中找到按钮: {sel}，文字: '{text}'")
-                            # 切回主文档前先记住，后面点击需要再切进来
                             driver.switch_to.default_content()
                             return btn, text
                     driver.switch_to.default_content()
@@ -110,7 +106,6 @@ def find_sign_button(driver, max_wait=20):
                     except Exception:
                         pass
 
-        # 在主文档中查找
         for sel in selectors:
             try:
                 elements = driver.find_elements(By.CSS_SELECTOR, sel)
@@ -122,7 +117,33 @@ def find_sign_button(driver, max_wait=20):
             except Exception:
                 pass
 
-        # 滚动一下触发懒加载
+        # JS 递归兜底：穿透 Shadow DOM 查找文字为“签到”的可见元素
+        try:
+            result = driver.execute_script("""
+                function findSignIn(root) {
+                    let elements = root.querySelectorAll('*');
+                    for (let el of elements) {
+                        if (el.textContent.trim() === '签到' && el.offsetParent !== null) {
+                            return el;
+                        }
+                        if (el.shadowRoot) {
+                            let found = findSignIn(el.shadowRoot);
+                            if (found) return found;
+                        }
+                    }
+                    return null;
+                }
+                return findSignIn(document);
+            """)
+            if result:
+                text = driver.execute_script("return arguments[0].textContent.trim()", result)
+                if text == '签到':
+                    print(f"[第{attempt}次] 通过 JS 递归查找到签到元素，直接点击")
+                    driver.execute_script("arguments[0].click();", result)
+                    return "JS_CLICKED", "签到"
+        except Exception:
+            pass
+
         try:
             driver.execute_script("window.scrollBy(0, 300);")
         except Exception:
@@ -140,11 +161,15 @@ def do_sign():
         return False
 
     chrome_options = Options()
-    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--headless=new')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
     chrome_options.add_argument('--disable-gpu')
     chrome_options.add_argument('--window-size=1920,1080')
+    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
 
     driver = None
     try:
@@ -153,12 +178,20 @@ def do_sign():
 
         print(f"访问: {TOPIC_URL}")
         driver.get(TOPIC_URL)
-        time.sleep(8)
+
+        # 等待“今日签到”标签出现，说明页面主体已渲染
+        try:
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '今日签到')]"))
+            )
+            print("页面主体已渲染（找到'今日签到'标签）")
+        except Exception:
+            print("等待'今日签到'标签超时")
+        time.sleep(3)
 
         print(f"当前页面标题: {driver.title}")
         print(f"当前页面URL: {driver.current_url}")
 
-        # 先诊断页面上的签到相关元素
         dump_sign_elements(driver)
 
         sign_btn, btn_text = find_sign_button(driver, max_wait=20)
@@ -168,6 +201,20 @@ def do_sign():
             dump_sign_elements(driver)
             send_email("微博签到失败", "<p>超时未找到签到按钮</p>")
             return False
+
+        # JS_CLICKED 表示按钮已经被 JS 直接点击，无需再点
+        if sign_btn == "JS_CLICKED":
+            print("已通过 JS 点击签到元素")
+            time.sleep(5)
+            result_btn, new_text = find_sign_button(driver, max_wait=10)
+            if new_text == '已签到' or new_text == '签到':
+                print("✅ 签到操作已完成（JS 点击路径）")
+                send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
+                return True
+            else:
+                print(f"JS 点击后状态: {new_text}")
+                send_email("微博签到异常", f"<p>JS 点击后状态: {new_text}</p>")
+                return False
 
         print(f"签到按钮文字: {btn_text}")
 
