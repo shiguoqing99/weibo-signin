@@ -17,7 +17,6 @@ EMAIL_PASS = os.environ.get('EMAIL_PASS', '')
 NOTIFY_EMAIL = os.environ.get('NOTIFY_EMAIL', '')
 
 TOPIC_URL = 'https://weibo.com/p/10080801cfe03f62bd4032bff8cb8607eb17e0/super_index'
-CONTAINER_ID = '10080801cfe03f62bd4032bff8cb8607eb17e0'
 
 def send_email(subject, content):
     if not EMAIL_USER or not EMAIL_PASS:
@@ -50,6 +49,47 @@ def add_cookies(driver, cookie_str):
     driver.refresh()
     time.sleep(3)
 
+def find_sign_button_by_text(driver):
+    """
+    以文字“签到”为锚点查找可点击的签到按钮。
+    优先找文字恰好是“签到”的元素，找不到再找包含“签到”的元素。
+    返回 (元素, 文字) 或 (None, None)
+    """
+    # 方式1：文字恰好是“签到”
+    try:
+        elements = driver.find_elements(By.XPATH, "//*[normalize-space(text())='签到']")
+        for el in elements:
+            try:
+                if el.is_displayed():
+                    print(f"找到文字恰好为'签到'的元素: <{el.tag_name}> class='{el.get_attribute('class')}'")
+                    return el, '签到'
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 方式2：文字包含“签到”，但排除“今日签到”这类统计标签
+    try:
+        elements = driver.find_elements(By.XPATH, "//*[contains(text(), '签到')]")
+        for el in elements:
+            try:
+                text = (el.text or '').strip()
+                if not el.is_displayed():
+                    continue
+                # 排除明显是统计信息的标签（含数字或“今日”）
+                if text == '签到':
+                    print(f"找到含'签到'且文字恰好的元素: <{el.tag_name}> class='{el.get_attribute('class')}'")
+                    return el, text
+                if '签到' in text and not any(ch.isdigit() for ch in text) and '今日' not in text:
+                    print(f"找到含'签到'的元素: <{el.tag_name}> class='{el.get_attribute('class')}' text='{text}'")
+                    return el, text
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return None, None
+
 def do_sign():
     print(f"开始签到 - {datetime.now()}")
     if not COOKIE_STR:
@@ -78,61 +118,95 @@ def do_sign():
         print(f"访问: {TOPIC_URL}")
         driver.get(TOPIC_URL)
 
-        # 等待页面基础框架加载（“今日签到”标签出现即说明主体已渲染）
+        # 等待页面出现含“签到”文字的元素
         try:
             WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '今日签到')]"))
+                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '签到')]"))
             )
-            print("页面主体已渲染（找到'今日签到'标签）")
+            print("页面已出现含'签到'文字的元素")
         except Exception:
-            print("等待'今日签到'标签超时，继续尝试接口调用")
+            print("等待含'签到'文字的元素超时")
         time.sleep(3)
 
         print(f"当前页面标题: {driver.title}")
         print(f"当前页面URL: {driver.current_url}")
 
-        # 直接通过页面上下文调用签到接口，绕过 UI 按钮渲染问题
-        print("尝试直接调用签到接口...")
-        sign_result = driver.execute_script("""
-            var containerid = arguments[0];
-            var timestamp = new Date().getTime();
-            var url = 'https://weibo.com/p/aj/general/button?api=http://i.huati.weibo.com/ajax/super/checkindone&id='
-                      + containerid + '&syn_weibo=0&_=' + timestamp;
-
-            return fetch(url, {
-                method: 'GET',
-                credentials: 'include',
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            })
-            .then(function(r) { return r.json(); })
-            .then(function(data) { return JSON.stringify(data); })
-            .catch(function(e) { return JSON.stringify({error: e.toString()}); });
-        """, CONTAINER_ID)
-
-        print(f"接口返回: {sign_result}")
-
+        # 诊断：打印所有含“签到”文字的元素
+        print("=== 诊断：所有含'签到'文字的元素 ===")
         try:
-            result_data = json.loads(sign_result)
-            code = str(result_data.get('code', ''))
-            msg = str(result_data.get('msg', ''))
-
-            if code == '100000':
-                print("✅ 签到成功（通过接口直接调用）!")
-                send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
-                return True
-            elif '已签' in msg:
-                print("ℹ️ 今日已签到")
-                send_email("微博签到提醒", "<p>今日已签到</p>")
-                return True
-            else:
-                print(f"❌ 接口返回失败: {result_data}")
-                send_email("微博签到失败", f"<p>接口返回: {result_data}</p>")
-                return False
+            all_sign = driver.find_elements(By.XPATH, "//*[contains(text(), '签到')]")
+            for el in all_sign[:15]:
+                try:
+                    print(f"  <{el.tag_name}> class='{el.get_attribute('class')}' text='{(el.text or '')[:40]}' displayed={el.is_displayed()}")
+                except Exception:
+                    pass
         except Exception as e:
-            print(f"解析结果失败: {e}, 原始返回: {sign_result}")
-            send_email("微博签到异常", f"<p>解析失败: {e}</p>")
+            print(f"诊断失败: {e}")
+        print("=== 诊断结束 ===")
+
+        btn, btn_text = find_sign_button_by_text(driver)
+
+        if btn is None:
+            print("❌ 仍未找到签到按钮")
+            # 兜底：打印所有 class 含 '1sn1l' 的元素
+            print("=== 诊断：所有 class 含 '1sn1l' 的元素 ===")
+            try:
+                elements = driver.execute_script("""
+                    var results = [];
+                    var all = document.querySelectorAll('[class*="1sn1l"]');
+                    for (var i = 0; i < all.length; i++) {
+                        results.push({
+                            tag: all[i].tagName.toLowerCase(),
+                            cls: all[i].className,
+                            text: (all[i].textContent || '').trim().slice(0, 40),
+                            visible: all[i].offsetParent !== null
+                        });
+                    }
+                    return results;
+                """)
+                for e in elements[:20]:
+                    print(f"  <{e['tag']}> class='{e['cls']}' text='{e['text']}' visible={e['visible']}")
+            except Exception as e:
+                print(f"诊断失败: {e}")
+            print("=== 诊断结束 ===")
+
+            send_email("微博签到失败", "<p>未找到签到按钮</p>")
+            return False
+
+        print(f"找到签到按钮，文字: '{btn_text}'")
+
+        if btn_text == '已签到':
+            print("今日已签到")
+            send_email("微博签到提醒", "<p>今日已签到</p>")
+            return True
+
+        driver.execute_script("arguments[0].click();", btn)
+        print("已点击签到按钮")
+        time.sleep(5)
+
+        # 点击后重新查找，检查文字是否变化
+        result_btn, new_text = find_sign_button_by_text(driver)
+
+        if result_btn is None:
+            print("点击后未找到按钮，检查页面文字变化...")
+            try:
+                all_sign = driver.find_elements(By.XPATH, "//*[contains(text(), '签到')]")
+                for el in all_sign[:10]:
+                    print(f"  点击后含'签到'元素: <{el.tag_name}> text='{(el.text or '')[:40]}'")
+            except Exception:
+                pass
+            send_email("微博签到异常", "<p>点击后无法确认状态</p>")
+            return False
+
+        print(f"签到后按钮文字: '{new_text}'")
+
+        if new_text == '已签到':
+            print("✅ 签到成功!")
+            send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
+            return True
+        else:
+            print("签到后按钮文字未变为'已签到'")
+            send_email("微博签到失败", f"<p>点击后按钮文字: {new_text}</p>")
             return False
 
     except Exception as e:
