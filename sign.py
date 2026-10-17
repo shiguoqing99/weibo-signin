@@ -38,23 +38,32 @@ def send_email(subject, content):
         print(f"邮件发送失败: {e}")
 
 def add_cookies(driver, cookie_str):
+    """添加完整 Cookie 到浏览器"""
     driver.get('https://weibo.com')
     time.sleep(2)
+
     for item in cookie_str.split(';'):
         item = item.strip()
         if '=' in item:
             key, value = item.split('=', 1)
-            if key in ['SUB', 'SUBP', 'SCF', 'PC_TOKEN', 'ALF']:
-                driver.add_cookie({'name': key, 'value': value, 'domain': '.weibo.com'})
+            try:
+                driver.add_cookie({
+                    'name': key.strip(),
+                    'value': value.strip(),
+                    'domain': '.weibo.com',
+                    'path': '/'
+                })
+            except Exception as e:
+                print(f"添加 Cookie {key} 失败: {e}")
+
     driver.refresh()
-    time.sleep(3)
+    time.sleep(5)
 
 def find_and_click_sign(driver):
     """
     用 JS 精准查找 _signBtnOverlay_1sn1l_355 并点击。
     返回 (是否找到, 点击前的文字, 点击后的文字)
     """
-    # 等待父容器 _actions_1sn1l_336 出现（最多20秒）
     try:
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, '[class*="_actions_1sn1l_336"]'))
@@ -63,11 +72,9 @@ def find_and_click_sign(driver):
     except Exception:
         print("等待父容器超时，继续尝试 JS 查找")
 
-    # 用 JS 查找签到按钮
     result = driver.execute_script("""
         var btn = document.querySelector('[class*="_signBtnOverlay_1sn1l_355"]');
         if (!btn) {
-            // 模糊兜底
             btn = document.querySelector('[class*="signBtnOverlay"]');
         }
         if (!btn) return {found: false};
@@ -87,7 +94,6 @@ def find_and_click_sign(driver):
         print("今日已签到")
         return True, '已签到', '已签到'
 
-    # 用 JS 点击
     clicked = driver.execute_script("""
         var btn = document.querySelector('[class*="_signBtnOverlay_1sn1l_355"]');
         if (!btn) btn = document.querySelector('[class*="signBtnOverlay"]');
@@ -98,7 +104,6 @@ def find_and_click_sign(driver):
     print(f"JS 点击结果: {clicked}")
     time.sleep(5)
 
-    # 点击后重新读取按钮文字
     after = driver.execute_script("""
         var btn = document.querySelector('[class*="_signBtnOverlay_1sn1l_355"]');
         if (!btn) btn = document.querySelector('[class*="signBtnOverlay"]');
@@ -136,7 +141,6 @@ def do_sign():
         print(f"访问: {TOPIC_URL}")
         driver.get(TOPIC_URL)
 
-        # 等待页面出现含“签到”文字的元素
         try:
             WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '签到')]"))
@@ -149,11 +153,10 @@ def do_sign():
         print(f"当前页面标题: {driver.title}")
         print(f"当前页面URL: {driver.current_url}")
 
-        # 诊断：打印 _actions_1sn1l_336 是否存在
         actions = driver.execute_script("""
             var el = document.querySelector('[class*="_actions_1sn1l_336"]');
             if (!el) return null;
-            return {outer: el.outerHTML.slice(0, 500), visible: el.offsetParent !== null};
+            return {outer: el.outerHTML.slice(0, 800), visible: el.offsetParent !== null};
         """)
         if actions:
             print(f"父容器 _actions_1sn1l_336 存在，visible={actions['visible']}")
