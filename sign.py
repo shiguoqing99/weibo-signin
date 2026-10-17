@@ -49,46 +49,64 @@ def add_cookies(driver, cookie_str):
     driver.refresh()
     time.sleep(3)
 
-def find_sign_button_by_text(driver):
+def find_and_click_sign(driver):
     """
-    以文字“签到”为锚点查找可点击的签到按钮。
-    优先找文字恰好是“签到”的元素，找不到再找包含“签到”的元素。
-    返回 (元素, 文字) 或 (None, None)
+    用 JS 精准查找 _signBtnOverlay_1sn1l_355 并点击。
+    返回 (是否找到, 点击前的文字, 点击后的文字)
     """
-    # 方式1：文字恰好是“签到”
+    # 等待父容器 _actions_1sn1l_336 出现（最多20秒）
     try:
-        elements = driver.find_elements(By.XPATH, "//*[normalize-space(text())='签到']")
-        for el in elements:
-            try:
-                if el.is_displayed():
-                    print(f"找到文字恰好为'签到'的元素: <{el.tag_name}> class='{el.get_attribute('class')}'")
-                    return el, '签到'
-            except Exception:
-                pass
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, '[class*="_actions_1sn1l_336"]'))
+        )
+        print("父容器 _actions_1sn1l_336 已出现")
     except Exception:
-        pass
+        print("等待父容器超时，继续尝试 JS 查找")
 
-    # 方式2：文字包含“签到”，但排除“今日签到”这类统计标签
-    try:
-        elements = driver.find_elements(By.XPATH, "//*[contains(text(), '签到')]")
-        for el in elements:
-            try:
-                text = (el.text or '').strip()
-                if not el.is_displayed():
-                    continue
-                # 排除明显是统计信息的标签（含数字或“今日”）
-                if text == '签到':
-                    print(f"找到含'签到'且文字恰好的元素: <{el.tag_name}> class='{el.get_attribute('class')}'")
-                    return el, text
-                if '签到' in text and not any(ch.isdigit() for ch in text) and '今日' not in text:
-                    print(f"找到含'签到'的元素: <{el.tag_name}> class='{el.get_attribute('class')}' text='{text}'")
-                    return el, text
-            except Exception:
-                pass
-    except Exception:
-        pass
+    # 用 JS 查找签到按钮
+    result = driver.execute_script("""
+        var btn = document.querySelector('[class*="_signBtnOverlay_1sn1l_355"]');
+        if (!btn) {
+            // 模糊兜底
+            btn = document.querySelector('[class*="signBtnOverlay"]');
+        }
+        if (!btn) return {found: false};
+        var text = (btn.textContent || '').trim();
+        var visible = btn.offsetParent !== null;
+        return {found: true, text: text, visible: visible, outer: btn.outerHTML.slice(0, 200)};
+    """)
 
-    return None, None
+    if not result.get('found'):
+        print("JS 未找到 _signBtnOverlay_1sn1l_355")
+        return False, None, None
+
+    print(f"JS 找到签到按钮: text='{result['text']}', visible={result['visible']}")
+    print(f"按钮 HTML 片段: {result['outer']}")
+
+    if result['text'] == '已签到':
+        print("今日已签到")
+        return True, '已签到', '已签到'
+
+    # 用 JS 点击
+    clicked = driver.execute_script("""
+        var btn = document.querySelector('[class*="_signBtnOverlay_1sn1l_355"]');
+        if (!btn) btn = document.querySelector('[class*="signBtnOverlay"]');
+        if (!btn) return false;
+        btn.click();
+        return true;
+    """)
+    print(f"JS 点击结果: {clicked}")
+    time.sleep(5)
+
+    # 点击后重新读取按钮文字
+    after = driver.execute_script("""
+        var btn = document.querySelector('[class*="_signBtnOverlay_1sn1l_355"]');
+        if (!btn) btn = document.querySelector('[class*="signBtnOverlay"]');
+        if (!btn) return null;
+        return (btn.textContent || '').trim();
+    """)
+    print(f"点击后按钮文字: '{after}'")
+    return True, result['text'], after
 
 def do_sign():
     print(f"开始签到 - {datetime.now()}")
@@ -131,82 +149,35 @@ def do_sign():
         print(f"当前页面标题: {driver.title}")
         print(f"当前页面URL: {driver.current_url}")
 
-        # 诊断：打印所有含“签到”文字的元素
-        print("=== 诊断：所有含'签到'文字的元素 ===")
-        try:
-            all_sign = driver.find_elements(By.XPATH, "//*[contains(text(), '签到')]")
-            for el in all_sign[:15]:
-                try:
-                    print(f"  <{el.tag_name}> class='{el.get_attribute('class')}' text='{(el.text or '')[:40]}' displayed={el.is_displayed()}")
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"诊断失败: {e}")
-        print("=== 诊断结束 ===")
+        # 诊断：打印 _actions_1sn1l_336 是否存在
+        actions = driver.execute_script("""
+            var el = document.querySelector('[class*="_actions_1sn1l_336"]');
+            if (!el) return null;
+            return {outer: el.outerHTML.slice(0, 500), visible: el.offsetParent !== null};
+        """)
+        if actions:
+            print(f"父容器 _actions_1sn1l_336 存在，visible={actions['visible']}")
+            print(f"父容器 HTML: {actions['outer']}")
+        else:
+            print("父容器 _actions_1sn1l_336 不存在")
 
-        btn, btn_text = find_sign_button_by_text(driver)
+        found, before_text, after_text = find_and_click_sign(driver)
 
-        if btn is None:
-            print("❌ 仍未找到签到按钮")
-            # 兜底：打印所有 class 含 '1sn1l' 的元素
-            print("=== 诊断：所有 class 含 '1sn1l' 的元素 ===")
-            try:
-                elements = driver.execute_script("""
-                    var results = [];
-                    var all = document.querySelectorAll('[class*="1sn1l"]');
-                    for (var i = 0; i < all.length; i++) {
-                        results.push({
-                            tag: all[i].tagName.toLowerCase(),
-                            cls: all[i].className,
-                            text: (all[i].textContent || '').trim().slice(0, 40),
-                            visible: all[i].offsetParent !== null
-                        });
-                    }
-                    return results;
-                """)
-                for e in elements[:20]:
-                    print(f"  <{e['tag']}> class='{e['cls']}' text='{e['text']}' visible={e['visible']}")
-            except Exception as e:
-                print(f"诊断失败: {e}")
-            print("=== 诊断结束 ===")
-
-            send_email("微博签到失败", "<p>未找到签到按钮</p>")
+        if not found:
+            send_email("微博签到失败", "<p>JS 未找到 _signBtnOverlay_1sn1l_355</p>")
             return False
 
-        print(f"找到签到按钮，文字: '{btn_text}'")
-
-        if btn_text == '已签到':
-            print("今日已签到")
+        if before_text == '已签到':
             send_email("微博签到提醒", "<p>今日已签到</p>")
             return True
 
-        driver.execute_script("arguments[0].click();", btn)
-        print("已点击签到按钮")
-        time.sleep(5)
-
-        # 点击后重新查找，检查文字是否变化
-        result_btn, new_text = find_sign_button_by_text(driver)
-
-        if result_btn is None:
-            print("点击后未找到按钮，检查页面文字变化...")
-            try:
-                all_sign = driver.find_elements(By.XPATH, "//*[contains(text(), '签到')]")
-                for el in all_sign[:10]:
-                    print(f"  点击后含'签到'元素: <{el.tag_name}> text='{(el.text or '')[:40]}'")
-            except Exception:
-                pass
-            send_email("微博签到异常", "<p>点击后无法确认状态</p>")
-            return False
-
-        print(f"签到后按钮文字: '{new_text}'")
-
-        if new_text == '已签到':
+        if after_text == '已签到':
             print("✅ 签到成功!")
             send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
             return True
         else:
-            print("签到后按钮文字未变为'已签到'")
-            send_email("微博签到失败", f"<p>点击后按钮文字: {new_text}</p>")
+            print(f"签到后按钮文字未变为'已签到'，实际: '{after_text}'")
+            send_email("微博签到失败", f"<p>点击后按钮文字: {after_text}</p>")
             return False
 
     except Exception as e:
