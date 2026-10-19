@@ -2,33 +2,33 @@ name: 微博签到
 
 on:
   schedule:
-    - cron: '0 20 * * *'   # UTC 20:00 = 北京时间 次日 4:00
+    - cron: '0 20 * * *'   # UTC 20:00 = 北京时间次日 4:00
   workflow_dispatch:
 
 jobs:
   sign:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: 安装Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    
-    - name: 安装Chrome
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y chromium-browser
-    
-    - name: 安装依赖
-      run: |
-        pip install selenium webdriver-manager
-    
-    - name: 执行签到
-      env:
-        WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
-        EMAIL_USER: ${{ secrets.EMAIL_USER }}
-        EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-        NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
-      run: python sign.py
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Chrome and ChromeDriver
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: 'stable'
+
+      - name: 安装 Python 依赖
+        run: |
+          pip install selenium requests
+
+      - name: 执行签到
+        env:
+          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+        run: python sign.py
