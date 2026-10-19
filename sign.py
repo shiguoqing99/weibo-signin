@@ -23,8 +23,8 @@ EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASS = os.environ.get('EMAIL_PASS', '')
 NOTIFY_EMAIL = os.environ.get('NOTIFY_EMAIL', '')
 
-# TOPIC_URL = 'https://weibo.com/p/10080801cfe03f62bd4032bff8cb8607eb17e0/super_index'
-TOPIC_URL = 'https://weibo.com/p/1008086f1b7983ba4fca7456e28317e78127ed/super_index'
+TOPIC_URL = 'https://weibo.com/p/10080801cfe03f62bd4032bff8cb8607eb17e0/super_index'
+# TOPIC_URL = 'https://weibo.com/p/1008086f1b7983ba4fca7456e28317e78127ed/super_index'
 MAX_RETRIES = 3
 COOKIE_VALIDATE_URL = "https://weibo.com/ajax/profile/info?uid=1000000000"
 
