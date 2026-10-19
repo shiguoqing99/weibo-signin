@@ -23,7 +23,8 @@ EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASS = os.environ.get('EMAIL_PASS', '')
 NOTIFY_EMAIL = os.environ.get('NOTIFY_EMAIL', '')
 
-TOPIC_URL = 'https://weibo.com/p/10080801cfe03f62bd4032bff8cb8607eb17e0/super_index'
+# TOPIC_URL = 'https://weibo.com/p/10080801cfe03f62bd4032bff8cb8607eb17e0/super_index'
+TOPIC_URL = 'https://weibo.com/p/1008086f1b7983ba4fca7456e28317e78127ed/super_index'
 MAX_RETRIES = 3
 COOKIE_VALIDATE_URL = "https://weibo.com/ajax/profile/info?uid=1000000000"
 
@@ -109,10 +110,9 @@ def add_cookies(driver, cookie_str):
 
 def find_sign_button(driver, wait):
     """
-    严格寻找签到按钮：只接受可见、文字中包含「签到」或「已签到」的元素。
-    CSS 和 XPath 都尝试一遍，找不到返回 None。
+    严格寻找签到按钮：只接受可见、文字为「签到」或包含「签到」但不含「已签到」的元素。
+    CSS 和 XPath 都尝试，找到返回元素，找不到返回 None。
     """
-    # CSS 候选：类名常见特征
     css_selectors = [
         '.super_index .W_btn_b',
         '[class*="sign_btn"]',
@@ -120,50 +120,44 @@ def find_sign_button(driver, wait):
         '[class*="qd_btn"]',
         '[class*="btn_sign"]',
         '.W_btn_b',
-        'a[class*="btn"]',
         'button[class*="btn"]',
     ]
-
     for selector in css_selectors:
         try:
-            # 等待元素出现在 DOM 中
-            elements = wait.until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, selector))
-            )
+            elements = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, selector)))
         except Exception:
             continue
-
         for el in elements:
             try:
                 if not el.is_displayed():
                     continue
                 text = (el.text or '').strip()
-                if text and ('签到' in text or '已签到' in text):
+                if text and '签到' in text and '已签到' not in text:
                     logger.info(f"CSS 命中签到按钮: {selector} | 文字: '{text}'")
                     return el
             except Exception:
                 continue
 
-    # XPath 兜底：按文字定位
+    # 核心 XPath：class 含 sign 且文字含「签到」但不含「已签到」
     xpath_selectors = [
-        '//a[contains(normalize-space(.), "签到")]',
-        '//button[contains(normalize-space(.), "签到")]',
-        '//*[contains(@class, "W_btn_b") and contains(normalize-space(.), "签到")]',
-        '//*[contains(@class, "sign") and contains(normalize-space(.), "签到")]',
+        '//*[contains(@class, "sign") and contains(normalize-space(.), "签到") and not(contains(normalize-space(.), "已签到"))]',
+        '//a[contains(normalize-space(.), "签到") and not(contains(normalize-space(.), "已签到"))]',
+        '//button[contains(normalize-space(.), "签到") and not(contains(normalize-space(.), "已签到"))]',
+        '//*[contains(@class, "W_btn_b") and contains(normalize-space(.), "签到") and not(contains(normalize-space(.), "已签到"))]',
     ]
     for xp in xpath_selectors:
         try:
-            elements = wait.until(
-                EC.presence_of_all_elements_located((By.XPATH, xp))
-            )
+            elements = wait.until(EC.presence_of_all_elements_located((By.XPATH, xp)))
         except Exception:
             continue
         for el in elements:
             try:
                 if el.is_displayed():
                     text = (el.text or '').strip()
-                    logger.info(f"XPath 命中签到按钮: {xp} | 文字: '{text}'")
-                    return el
+                    # 排除容器级元素：文字过长说明命中的是父节点
+                    if text and len(text) <= 10:
+                        logger.info(f"XPath 命中签到按钮: {xp} | 文字: '{text}'")
+                        return el
             except Exception:
                 continue
 
@@ -172,12 +166,12 @@ def find_sign_button(driver, wait):
 
 def wait_for_signed(driver, timeout=15):
     """
-    轮询等待页面上出现「已签到」/「签到成功」文字，最多等 timeout 秒。
+    轮询等待页面上出现「已签到」/「签到成功」标识。
+    只匹配文字较短（<= 20 字符）的可见元素，避免抓到整页文本。
     """
     end = time.time() + timeout
     while time.time() < end:
         try:
-            # 找任何包含「已签到」或「签到成功」的可点击元素
             els = driver.find_elements(
                 By.XPATH,
                 '//*[contains(normalize-space(.), "已签到") or contains(normalize-space(.), "签到成功")]'
@@ -185,7 +179,7 @@ def wait_for_signed(driver, timeout=15):
             for el in els:
                 if el.is_displayed():
                     text = (el.text or '').strip()
-                    if text:
+                    if text and len(text) <= 20:
                         logger.info(f"检测到签到完成标识: '{text}'")
                         return True
         except Exception:
@@ -241,7 +235,6 @@ def do_sign():
             sign_btn = find_sign_button(driver, wait)
 
             if not sign_btn:
-                # 保存截图方便排查
                 try:
                     driver.save_screenshot('sign_failure.png')
                     logger.info("已保存页面截图: sign_failure.png")
@@ -254,26 +247,23 @@ def do_sign():
             btn_text = (sign_btn.text or '').strip()
             logger.info(f"签到按钮文字: '{btn_text}'")
 
-            if '已签到' in btn_text or '签到成功' in btn_text:
+            if '已签到' in btn_text:
                 logger.info("今日已签到")
                 send_email("微博签到提醒", f"<p>今日已签到 - {datetime.now()}</p>")
                 return True
 
             logger.info("点击签到按钮...")
             try:
-                # 优先用原生点击，失败则退回 JS 点击
                 sign_btn.click()
             except Exception:
                 logger.warning("原生点击失败，尝试 JS 点击")
                 driver.execute_script("arguments[0].click();", sign_btn)
 
-            # 轮询等待签到完成
             if wait_for_signed(driver, timeout=15):
                 logger.info("签到成功!")
                 send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
                 return True
             else:
-                # 签到后没检测到「已签到」，也截个图
                 try:
                     driver.save_screenshot('sign_after_click.png')
                     logger.info("已保存点击后截图: sign_after_click.png")
