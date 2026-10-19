@@ -25,9 +25,7 @@ NOTIFY_EMAIL = os.environ.get('NOTIFY_EMAIL', '')
 
 TOPIC_URL = 'https://weibo.com/p/10080801cfe03f62bd4032bff8cb8607eb17e0/super_index'
 MAX_RETRIES = 3
-
-# 用于接口验证 Cookie 的轻量级需要登录的 endpoint
-COOKIE_VALIDATE_URL = "https://weibo.com/ajax/profile/info?uid=1000000000"  # 随便一个uid，只为触发登录校验
+COOKIE_VALIDATE_URL = "https://weibo.com/ajax/profile/info?uid=1000000000"
 
 
 def parse_cookies(cookie_str):
@@ -84,12 +82,10 @@ def add_cookies(driver, cookie_str):
     driver.refresh()
     time.sleep(3)
 
-    # ---------- 关键改动：先用接口权威验证 Cookie，而不是只看页面元素 ----------
+    # 接口权威验证 Cookie
     try:
-        # 从 Selenium 中取出完整 Cookie，转成 requests 可用格式
         selenium_cookies = driver.get_cookies()
         cookie_jar = {c['name']: c['value'] for c in selenium_cookies}
-        # 补上注入时可能遗漏的 HttpOnly 字段（如果有）
         for k, v in cookies.items():
             cookie_jar.setdefault(k, v)
 
@@ -100,8 +96,6 @@ def add_cookies(driver, cookie_str):
         }
         resp = requests.get(COOKIE_VALIDATE_URL, cookies=cookie_jar, headers=headers, timeout=15)
         data = resp.json()
-
-        # 微博接口通常用 ok=1 表示登录态有效
         if data.get("ok") == 1:
             logger.info("接口验证登录状态：成功")
             return True
@@ -111,7 +105,93 @@ def add_cookies(driver, cookie_str):
     except Exception as e:
         logger.error(f"接口验证时发生异常: {e}")
         return False
-    # ----------------------------------------------------------------
+
+
+def find_sign_button(driver, wait):
+    """
+    严格寻找签到按钮：只接受可见、文字中包含「签到」或「已签到」的元素。
+    CSS 和 XPath 都尝试一遍，找不到返回 None。
+    """
+    # CSS 候选：类名常见特征
+    css_selectors = [
+        '.super_index .W_btn_b',
+        '[class*="sign_btn"]',
+        '[class*="checkin"]',
+        '[class*="qd_btn"]',
+        '[class*="btn_sign"]',
+        '.W_btn_b',
+        'a[class*="btn"]',
+        'button[class*="btn"]',
+    ]
+
+    for selector in css_selectors:
+        try:
+            # 等待元素出现在 DOM 中
+            elements = wait.until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, selector))
+            )
+        except Exception:
+            continue
+
+        for el in elements:
+            try:
+                if not el.is_displayed():
+                    continue
+                text = (el.text or '').strip()
+                if text and ('签到' in text or '已签到' in text):
+                    logger.info(f"CSS 命中签到按钮: {selector} | 文字: '{text}'")
+                    return el
+            except Exception:
+                continue
+
+    # XPath 兜底：按文字定位
+    xpath_selectors = [
+        '//a[contains(normalize-space(.), "签到")]',
+        '//button[contains(normalize-space(.), "签到")]',
+        '//*[contains(@class, "W_btn_b") and contains(normalize-space(.), "签到")]',
+        '//*[contains(@class, "sign") and contains(normalize-space(.), "签到")]',
+    ]
+    for xp in xpath_selectors:
+        try:
+            elements = wait.until(
+                EC.presence_of_all_elements_located((By.XPATH, xp))
+            )
+        except Exception:
+            continue
+        for el in elements:
+            try:
+                if el.is_displayed():
+                    text = (el.text or '').strip()
+                    logger.info(f"XPath 命中签到按钮: {xp} | 文字: '{text}'")
+                    return el
+            except Exception:
+                continue
+
+    return None
+
+
+def wait_for_signed(driver, timeout=15):
+    """
+    轮询等待页面上出现「已签到」/「签到成功」文字，最多等 timeout 秒。
+    """
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            # 找任何包含「已签到」或「签到成功」的可点击元素
+            els = driver.find_elements(
+                By.XPATH,
+                '//*[contains(normalize-space(.), "已签到") or contains(normalize-space(.), "签到成功")]'
+            )
+            for el in els:
+                if el.is_displayed():
+                    text = (el.text or '').strip()
+                    if text:
+                        logger.info(f"检测到签到完成标识: '{text}'")
+                        return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
 
 
 def do_sign():
@@ -127,21 +207,19 @@ def do_sign():
     chrome_options.add_argument('--disable-dev-shm-usage')
     chrome_options.add_argument('--disable-gpu')
     chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-
-    # ---------- 增强反检测 ----------
+    chrome_options.add_argument(
+        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    )
     chrome_options.add_argument('--disable-blink-features=AutomationControlled')
     chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
     chrome_options.add_experimental_option('useAutomationExtension', False)
-    # ------------------------------
 
     driver = None
     for attempt in range(MAX_RETRIES):
         try:
             logger.info(f"第 {attempt + 1}/{MAX_RETRIES} 次尝试")
             driver = webdriver.Chrome(options=chrome_options)
-
-            # 在页面加载前抹掉 navigator.webdriver 特征
             driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
                 "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             })
@@ -159,65 +237,50 @@ def do_sign():
                 send_email("微博签到失败", "<p>Cookie已失效，被重定向到登录页</p>")
                 return False
 
-            sign_btn = None
-            # ---------- 更新后的选择器：先 CSS，再用 XPath 文本兜底 ----------
-            css_selectors = [
-                '.btn_bed .W_btn_b',              # 经典超话签到按钮容器
-                '.super_index .W_btn_b',          # 超话主页常见按钮
-                'a[class*="btn"]',                 # 宽泛链接按钮兜底
-            ]
             wait = WebDriverWait(driver, 10)
-            for selector in css_selectors:
-                try:
-                    sign_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, selector)))
-                    logger.info(f"CSS 命中签到按钮: {selector}")
-                    break
-                except Exception:
-                    continue
+            sign_btn = find_sign_button(driver, wait)
 
             if not sign_btn:
+                # 保存截图方便排查
                 try:
-                    sign_btn = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, '//*[contains(text(), "签到")]'))
-                    )
-                    logger.info("XPath 文本命中签到按钮")
-                except Exception:
-                    pass
-            # -----------------------------------------------------------------
-
-            if not sign_btn:
-                logger.error("未找到签到按钮")
-                send_email("微博签到失败", "<p>未找到签到按钮，页面结构可能已变化</p>")
+                    driver.save_screenshot('sign_failure.png')
+                    logger.info("已保存页面截图: sign_failure.png")
+                except Exception as e:
+                    logger.warning(f"截图失败: {e}")
+                logger.error("未找到签到按钮，页面结构可能已变化")
+                send_email("微博签到失败", "<p>未找到签到按钮，已保存截图</p>")
                 return False
 
-            btn_text = sign_btn.text
+            btn_text = (sign_btn.text or '').strip()
             logger.info(f"签到按钮文字: '{btn_text}'")
+
             if '已签到' in btn_text or '签到成功' in btn_text:
                 logger.info("今日已签到")
                 send_email("微博签到提醒", f"<p>今日已签到 - {datetime.now()}</p>")
                 return True
 
             logger.info("点击签到按钮...")
-            sign_btn.click()
-            time.sleep(3)
-
             try:
-                result_btn = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, '//*[contains(text(), "已签到") or contains(text(), "签到成功")]'))
-                )
-                new_text = result_btn.text
-                logger.info(f"签到后文字: '{new_text}'")
-                if '已签到' in new_text or '签到成功' in new_text:
-                    logger.info("签到成功!")
-                    send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
-                    return True
-                else:
-                    logger.warning(f"签到后文字未变为'已签到': {new_text}")
-                    send_email("微博签到失败", f"<p>点击后文字: {new_text}</p>")
-                    return False
-            except Exception as e:
-                logger.error(f"验证签到结果失败: {e}")
-                send_email("微博签到异常", f"<p>点击后无法确认状态: {e}</p>")
+                # 优先用原生点击，失败则退回 JS 点击
+                sign_btn.click()
+            except Exception:
+                logger.warning("原生点击失败，尝试 JS 点击")
+                driver.execute_script("arguments[0].click();", sign_btn)
+
+            # 轮询等待签到完成
+            if wait_for_signed(driver, timeout=15):
+                logger.info("签到成功!")
+                send_email("微博签到成功", f"<p>签到成功！{datetime.now()}</p>")
+                return True
+            else:
+                # 签到后没检测到「已签到」，也截个图
+                try:
+                    driver.save_screenshot('sign_after_click.png')
+                    logger.info("已保存点击后截图: sign_after_click.png")
+                except Exception as e:
+                    logger.warning(f"截图失败: {e}")
+                logger.warning("点击后未检测到『已签到』标识，签到可能未成功")
+                send_email("微博签到失败", "<p>点击后未检测到签到完成标识，已保存截图</p>")
                 return False
 
         except Exception as e:
