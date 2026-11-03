@@ -2,7 +2,7 @@ name: 微博签到
 
 on:
   schedule:
-    - cron: '0 20 * * *'   # UTC 20:00 = 北京时间次日 4:00
+    - cron: '0 16 * * *'   # UTC 20:00 = 北京时间次日 4:00
   workflow_dispatch:
 
 jobs:
